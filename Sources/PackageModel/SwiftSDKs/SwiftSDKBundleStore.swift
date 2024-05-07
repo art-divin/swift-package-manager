@@ -11,7 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 // FIXME: can't write `import actor Basics.HTTPClient`, importing the whole module because of that :(
-@_spi(SwiftPMInternal)
 import Basics
 import struct Foundation.URL
 import protocol TSCBasic.FileSystem
@@ -47,7 +46,7 @@ public final class SwiftSDKBundleStore {
             case let .noMatchingSwiftSDK(selector, hostTriple):
                 return """
                 No Swift SDK found matching query `\(selector)` and host triple \
-                `\(hostTriple.tripleString)`. Use `swift experimental-sdk list` command to see \
+                `\(hostTriple.tripleString)`. Use `swift sdk list` command to see \
                 available Swift SDKs.
                 """
             }

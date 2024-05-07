@@ -13,7 +13,6 @@
 import Basics
 import PackageGraph
 
-@_spi(SwiftPMInternal)
 import PackageModel
 
 import OrderedCollections
@@ -22,35 +21,38 @@ import SPMBuildCore
 import struct TSCBasic.SortedArray
 
 /// The build description for a product.
-public final class ProductBuildDescription: SPMBuildCore.ProductBuildDescription {
+package final class ProductBuildDescription: SPMBuildCore.ProductBuildDescription {
     /// The reference to the product.
-    public let package: ResolvedPackage
+    package let package: ResolvedPackage
 
     /// The reference to the product.
-    public let product: ResolvedProduct
+    package let product: ResolvedProduct
 
     /// The tools version of the package that declared the product.  This can
     /// can be used to conditionalize semantically significant changes in how
     /// a target is built.
-    public let toolsVersion: ToolsVersion
+    package let toolsVersion: ToolsVersion
 
     /// The build parameters.
-    public let buildParameters: BuildParameters
+    package let buildParameters: BuildParameters
 
     /// All object files to link into this product.
     ///
     // Computed during build planning.
-    public internal(set) var objects = SortedArray<AbsolutePath>()
+    package internal(set) var objects = SortedArray<AbsolutePath>()
 
     /// The dynamic libraries this product needs to link with.
     // Computed during build planning.
     var dylibs: [ProductBuildDescription] = []
 
+    /// The list of provided libraries that are going to be used by this product.
+    var providedLibraries: [String: AbsolutePath] = [:]
+
     /// Any additional flags to be added. These flags are expected to be computed during build planning.
     var additionalFlags: [String] = []
 
     /// The list of targets that are going to be linked statically in this product.
-    var staticTargets: [ResolvedTarget] = []
+    var staticTargets: [ResolvedModule] = []
 
     /// The list of Swift modules that should be passed to the linker. This is required for debugging to work.
     var swiftASTs: SortedArray<AbsolutePath> = .init()
@@ -129,7 +131,7 @@ public final class ProductBuildDescription: SPMBuildCore.ProductBuildDescription
     }
 
     /// The arguments to the librarian to create a static library.
-    public func archiveArguments() throws -> [String] {
+    package func archiveArguments() throws -> [String] {
         let librarian = self.buildParameters.toolchain.librarianPath.pathString
         let triple = self.buildParameters.triple
         if triple.isWindows(), librarian.hasSuffix("link") || librarian.hasSuffix("link.exe") {
@@ -142,7 +144,7 @@ public final class ProductBuildDescription: SPMBuildCore.ProductBuildDescription
     }
 
     /// The arguments to link and create this product.
-    public func linkArguments() throws -> [String] {
+    package func linkArguments() throws -> [String] {
         var args = [buildParameters.toolchain.swiftCompilerPath.pathString]
         args += self.buildParameters.sanitizers.linkSwiftFlags()
         args += self.additionalFlags
@@ -156,6 +158,8 @@ public final class ProductBuildDescription: SPMBuildCore.ProductBuildDescription
         if !self.libraryBinaryPaths.isEmpty {
             args += ["-F", self.buildParameters.buildPath.pathString]
         }
+
+        self.providedLibraries.forEach { args += ["-L", $1.pathString, "-l", $0] }
 
         args += ["-L", self.buildParameters.buildPath.pathString]
         args += try ["-o", binaryPath.pathString]
@@ -183,6 +187,12 @@ public final class ProductBuildDescription: SPMBuildCore.ProductBuildDescription
 
         var isLinkingStaticStdlib = false
         let triple = self.buildParameters.triple
+
+        // radar://112671586 supress unnecessary warnings
+        if triple.isMacOSX {
+            args += ["-Xlinker", "-no_warn_duplicate_libraries"]
+        }
+
         switch derivedProductType {
         case .macro:
             throw InternalError("macro not supported") // should never be reached
@@ -316,7 +326,7 @@ public final class ProductBuildDescription: SPMBuildCore.ProductBuildDescription
         // setting is the package-level right now. We might need to figure out a better
         // answer for libraries if/when we support specifying deployment target at the
         // target-level.
-        args += try self.buildParameters.targetTripleArgs(for: self.product.targets[self.product.targets.startIndex])
+        args += try self.buildParameters.tripleArgs(for: self.product.targets[self.product.targets.startIndex])
 
         // Add arguments from declared build settings.
         args += self.buildSettingsFlags
@@ -351,7 +361,7 @@ public final class ProductBuildDescription: SPMBuildCore.ProductBuildDescription
         // Library search path for the toolchain's copy of SwiftSyntax.
         #if BUILD_MACROS_AS_DYLIBS
         if product.type == .macro {
-            args += try ["-L", buildParameters.toolchain.hostLibDir.pathString]
+            args += try ["-L", defaultBuildParameters.toolchain.hostLibDir.pathString]
         }
         #endif
 
@@ -391,7 +401,7 @@ public final class ProductBuildDescription: SPMBuildCore.ProductBuildDescription
 }
 
 extension SortedArray where Element == AbsolutePath {
-    public static func +=<S: Sequence>(lhs: inout SortedArray, rhs: S) where S.Iterator.Element == AbsolutePath {
+    package static func +=<S: Sequence>(lhs: inout SortedArray, rhs: S) where S.Iterator.Element == AbsolutePath {
         lhs.insert(contentsOf: rhs)
     }
 }

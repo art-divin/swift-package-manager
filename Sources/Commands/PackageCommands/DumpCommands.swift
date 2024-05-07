@@ -13,13 +13,11 @@
 import ArgumentParser
 import Basics
 
-@_spi(SwiftPMInternal)
 import CoreCommands
 
 import Foundation
 import PackageModel
 
-@_spi(SwiftPMInternal)
 import SPMBuildCore
 
 import XCBuildSupport
@@ -77,7 +75,7 @@ struct DumpSymbolGraph: SwiftCommand {
         for target in targets {
             print("-- Emitting symbol graph for", target.name)
             let result = try symbolGraphExtractor.extractSymbolGraph(
-                target: target,
+                module: target,
                 buildPlan: buildPlan,
                 outputRedirection: .collect(redirectStderr: true),
                 outputDirectory: symbolGraphDirectory,

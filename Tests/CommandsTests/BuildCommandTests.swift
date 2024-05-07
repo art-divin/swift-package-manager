@@ -13,7 +13,6 @@
 import Basics
 @testable import Commands
 
-@_spi(SwiftPMInternal)
 @testable 
 import CoreCommands
 
@@ -43,10 +42,14 @@ final class BuildCommandTests: CommandsTestCase {
         try SwiftPM.Build.execute(args, packagePath: packagePath, env: environment)
     }
 
-    func build(_ args: [String], packagePath: AbsolutePath? = nil, isRelease: Bool = false) throws -> BuildResult {
+    func build(_ args: [String], packagePath: AbsolutePath? = nil, isRelease: Bool = false, cleanAfterward: Bool = true) throws -> BuildResult {
         let buildConfigurationArguments = isRelease ? ["-c", "release"] : []
         let (stdout, stderr) = try execute(args + buildConfigurationArguments, packagePath: packagePath)
-        defer { try! SwiftPM.Package.execute(["clean"], packagePath: packagePath) }
+        defer {
+            if cleanAfterward {
+                try! SwiftPM.Package.execute(["clean"], packagePath: packagePath)
+            }
+        }
         let (binPathOutput, _) = try execute(
             ["--show-bin-path"] + buildConfigurationArguments,
             packagePath: packagePath
@@ -643,6 +646,39 @@ final class BuildCommandTests: CommandsTestCase {
             buildResult = try self.build(["-c", "release", "-v"], packagePath: fixturePath, isRelease: true)
 
             XCTAssertNoMatch(buildResult.stdout, .contains("codesign --force --sign - --entitlements"))
+        }
+    }
+
+#if !canImport(Darwin)
+    func testIgnoresLinuxMain() throws {
+        try fixture(name: "Miscellaneous/TestDiscovery/IgnoresLinuxMain") { fixturePath in
+            let buildResult = try self.build(["-v", "--build-tests", "--enable-test-discovery"], packagePath: fixturePath, cleanAfterward: false)
+            let testBinaryPath = buildResult.binPath.appending("IgnoresLinuxMainPackageTests.xctest")
+
+            let processTerminated = expectation(description: "Process terminated")
+            _ = try Process.run(testBinaryPath.asURL, arguments: [] ) { process in
+               XCTAssertEqual(process.terminationStatus, EXIT_SUCCESS)
+               processTerminated.fulfill()
+            }
+            wait(for: [processTerminated], timeout: .infinity)
+        }
+    }
+#endif
+
+    func testCodeCoverage() throws {
+        // Test that no codecov directory is created if not specified when building.
+        try fixture(name: "Miscellaneous/TestDiscovery/Simple") { path in
+            let buildResult = try self.build(["--build-tests"], packagePath: path, cleanAfterward: false)
+            XCTAssertThrowsError(try SwiftPM.Test.execute(["--skip-build", "--enable-code-coverage"], packagePath: path))
+        }
+
+        // Test that enabling code coverage during building produces the expected folder.
+        try fixture(name: "Miscellaneous/TestDiscovery/Simple") { path in
+            let buildResult = try self.build(["--build-tests", "--enable-code-coverage"], packagePath: path, cleanAfterward: false)
+            try SwiftPM.Test.execute(["--skip-build", "--enable-code-coverage"], packagePath: path)
+            let codeCovPath = buildResult.binPath.appending("codecov")
+            let codeCovFiles = try localFileSystem.getDirectoryContents(codeCovPath)
+            XCTAssertGreaterThan(codeCovFiles.count, 0)
         }
     }
 }

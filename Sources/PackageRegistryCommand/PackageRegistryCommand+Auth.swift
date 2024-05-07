@@ -13,10 +13,8 @@
 import ArgumentParser
 import Basics
 
-@_spi(SwiftPMInternal)
 import Commands
 
-@_spi(SwiftPMInternal)
 import CoreCommands
 
 import Foundation
@@ -73,12 +71,13 @@ private func readpassword(_ prompt: String) throws -> String {
 
     #if canImport(Darwin)
     var buffer = [CChar](repeating: 0, count: PackageRegistryCommand.Login.passwordBufferSize)
+    password = try withExtendedLifetime(buffer) {
+        guard let passwordPtr = readpassphrase(prompt, &buffer, buffer.count, 0) else {
+            throw StringError("unable to read input")
+        }
 
-    guard let passwordPtr = readpassphrase(prompt, &buffer, buffer.count, 0) else {
-        throw StringError("unable to read input")
+        return String(cString: passwordPtr)
     }
-
-    password = String(cString: passwordPtr)
     #else
     // GNU C implementation of getpass has no limit on the password length
     // (https://man7.org/linux/man-pages/man3/getpass.3.html)

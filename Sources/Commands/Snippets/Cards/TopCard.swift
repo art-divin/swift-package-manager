@@ -11,7 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 
-@_spi(SwiftPMInternal)
 import CoreCommands
 
 import Foundation
@@ -154,6 +153,8 @@ fileprivate extension Target.Kind {
             return "snippets"
         case .macro:
             return "macros"
+        case .providedLibrary:
+            return "provided libraries"
         }
     }
 }

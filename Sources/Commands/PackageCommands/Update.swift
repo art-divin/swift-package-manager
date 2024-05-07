@@ -12,7 +12,6 @@
 
 import ArgumentParser
 
-@_spi(SwiftPMInternal)
 import CoreCommands
 
 import Dispatch
@@ -74,7 +73,7 @@ extension SwiftPackageCommand {
                 case .removed:
                     report += "\n"
                     report += "- \(package.identity) \(currentVersion)"
-                case .unchanged:
+                case .unchanged, .usesLibrary:
                     continue
                 }
             }

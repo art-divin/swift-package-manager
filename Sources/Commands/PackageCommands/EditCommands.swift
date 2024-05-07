@@ -13,7 +13,6 @@
 import ArgumentParser
 import Basics
 
-@_spi(SwiftPMInternal)
 import CoreCommands
 
 import SourceControl
@@ -75,7 +74,6 @@ extension SwiftPackageCommand {
                 packageName: packageName,
                 forceRemove: shouldForceRemove,
                 root: swiftCommandState.getWorkspaceRoot(),
-                availableLibraries: swiftCommandState.getHostToolchain().providedLibraries,
                 observabilityScope: swiftCommandState.observabilityScope
             )
         }

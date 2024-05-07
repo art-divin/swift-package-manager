@@ -11,18 +11,18 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
-import struct PackageGraph.ResolvedTarget
+import struct PackageGraph.ResolvedModule
 import struct PackageModel.Resource
 import struct PackageModel.ToolsVersion
 import struct SPMBuildCore.BuildToolPluginInvocationResult
 import struct SPMBuildCore.BuildParameters
 
-public enum BuildDescriptionError: Swift.Error {
+package enum BuildDescriptionError: Swift.Error {
     case requestedFileNotPartOfTarget(targetName: String, requestedFilePath: AbsolutePath)
 }
 
 /// A target description which can either be for a Swift or Clang target.
-public enum TargetBuildDescription {
+package enum TargetBuildDescription {
     /// Swift target description.
     case swift(SwiftTargetBuildDescription)
 
@@ -61,7 +61,7 @@ public enum TargetBuildDescription {
         }
     }
 
-    var target: ResolvedTarget {
+    var target: ResolvedModule {
         switch self {
         case .swift(let target):
             return target.target
@@ -101,7 +101,7 @@ public enum TargetBuildDescription {
     var buildParameters: BuildParameters {
         switch self {
         case .swift(let swiftTargetBuildDescription):
-            return swiftTargetBuildDescription.buildParameters
+            return swiftTargetBuildDescription.defaultBuildParameters
         case .clang(let clangTargetBuildDescription):
             return clangTargetBuildDescription.buildParameters
         }

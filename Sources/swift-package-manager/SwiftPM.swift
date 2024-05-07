@@ -12,7 +12,6 @@
 
 import Basics
 
-@_spi(SwiftPMInternal)
 import Commands
 
 import SwiftSDKCommand
@@ -43,9 +42,12 @@ struct SwiftPM {
         case "swift-build":
             await SwiftBuildCommand.main()
         case "swift-experimental-sdk":
+            print("warning: `swift experimental-sdk` command is deprecated and will be removed in a future version of SwiftPM. Use `swift sdk` instead.")
+            fallthrough
+        case "swift-sdk":
             await SwiftSDKCommand.main()
         case "swift-test":
-            SwiftTestCommand.main()
+            await SwiftTestCommand.main()
         case "swift-run":
             await SwiftRunCommand.main()
         case "swift-package-collection":

@@ -26,7 +26,7 @@ import class TSCBasic.Process
 import struct TSCBasic.ProcessResult
 
 /// A wrapper for swift-symbolgraph-extract tool.
-public struct SymbolGraphExtract {
+package struct SymbolGraphExtract {
     let fileSystem: FileSystem
     let tool: AbsolutePath
     let observabilityScope: ObservabilityScope
@@ -39,34 +39,34 @@ public struct SymbolGraphExtract {
     var outputFormat = OutputFormat.json(pretty: false)
 
     /// Access control levels.
-    public enum AccessLevel: String, RawRepresentable, CaseIterable, ExpressibleByArgument {
+    package enum AccessLevel: String, RawRepresentable, CaseIterable, ExpressibleByArgument {
         // The cases reflect those found in `include/swift/AST/AttrKind.h` of the swift compiler (at commit 03f55d7bb4204ca54841218eb7cc175ae798e3bd)
         case `private`, `fileprivate`, `internal`, `public`, `open`
     }
 
     /// Output format of the generated symbol graph.
-    public enum OutputFormat {
+    package enum OutputFormat {
         /// JSON format, optionally "pretty-printed" be more human-readable.
         case json(pretty: Bool)
     }
     
-    /// Creates a symbol graph for `target` in `outputDirectory` using the build information from `buildPlan`.
+    /// Creates a symbol graph for `module` in `outputDirectory` using the build information from `buildPlan`.
     /// The `outputDirection` determines how the output from the tool subprocess is handled, and `verbosity` specifies
     /// how much console output to ask the tool to emit.
-    public func extractSymbolGraph(
-        target: ResolvedTarget,
+    package func extractSymbolGraph(
+        module: ResolvedModule,
         buildPlan: BuildPlan,
         outputRedirection: TSCBasic.Process.OutputRedirection = .none,
         outputDirectory: AbsolutePath,
         verboseOutput: Bool
     ) throws -> ProcessResult {
-        let buildParameters = buildPlan.buildParameters(for: target)
+        let buildParameters = buildPlan.buildParameters(for: module)
         try self.fileSystem.createDirectory(outputDirectory, recursive: true)
 
         // Construct arguments for extracting symbols for a single target.
         var commandLine = [self.tool.pathString]
-        commandLine += ["-module-name", target.c99name]
-        commandLine += try buildParameters.targetTripleArgs(for: target)
+        commandLine += ["-module-name", module.c99name]
+        commandLine += try buildParameters.tripleArgs(for: module)
         commandLine += try buildPlan.createAPIToolCommonArgs(includeLibrarySearchPaths: true)
         commandLine += ["-module-cache-path", try buildParameters.moduleCache.pathString]
         if verboseOutput {
