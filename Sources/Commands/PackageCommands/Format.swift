@@ -12,13 +12,10 @@
 
 import ArgumentParser
 import Basics
-
 import CoreCommands
-
 import PackageModel
 
 import class TSCBasic.Process
-import enum TSCBasic.ProcessEnv
 
 import enum TSCUtility.Diagnostics
 
@@ -37,7 +34,7 @@ extension SwiftPackageCommand {
         func run(_ swiftCommandState: SwiftCommandState) async throws {
             // Look for swift-format binary.
             // FIXME: This should be moved to user toolchain.
-            let swiftFormatInEnv = lookupExecutablePath(filename: ProcessEnv.block["SWIFT_FORMAT"])
+            let swiftFormatInEnv = lookupExecutablePath(filename: Environment.current["SWIFT_FORMAT"])
             guard let swiftFormat = swiftFormatInEnv ?? Process.findExecutable("swift-format").flatMap(AbsolutePath.init) else {
                 swiftCommandState.observabilityScope.emit(error: "Could not find swift-format in PATH or SWIFT_FORMAT")
                 throw TSCUtility.Diagnostics.fatalError
@@ -62,7 +59,7 @@ extension SwiftPackageCommand {
                 : swiftFormatFlags
 
             // Process each target in the root package.
-            let paths = package.targets.flatMap { target in
+            let paths = package.modules.flatMap { target in
                 target.sources.paths.filter { file in
                     file.extension == SupportedLanguageExtension.swift.rawValue
                 }

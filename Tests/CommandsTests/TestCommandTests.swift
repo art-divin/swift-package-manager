@@ -213,7 +213,7 @@ final class TestCommandTests: CommandsTestCase {
 
         // should emit when LinuxMain is not present
         try fixture(name: "Miscellaneous/TestDiscovery/Simple") { fixturePath in
-            try localFileSystem.writeFileContents(fixturePath.appending(components: "Tests", SwiftTarget.defaultTestEntryPointName), bytes: "fatalError(\"boom\")")
+            try localFileSystem.writeFileContents(fixturePath.appending(components: "Tests", SwiftModule.defaultTestEntryPointName), bytes: "fatalError(\"boom\")")
             let (_, stderr) = try SwiftPM.Test.execute(["--enable-test-discovery"] + compilerDiagnosticFlags, packagePath: fixturePath)
             XCTAssertMatch(stderr, .contains("warning: '--enable-test-discovery' option is deprecated"))
         }
@@ -225,7 +225,7 @@ final class TestCommandTests: CommandsTestCase {
         }
         // should not emit when LinuxMain is present
         try fixture(name: "Miscellaneous/TestDiscovery/Simple") { fixturePath in
-            try localFileSystem.writeFileContents(fixturePath.appending(components: "Tests", SwiftTarget.defaultTestEntryPointName), bytes: "fatalError(\"boom\")")
+            try localFileSystem.writeFileContents(fixturePath.appending(components: "Tests", SwiftModule.defaultTestEntryPointName), bytes: "fatalError(\"boom\")")
             let (_, stderr) = try SwiftPM.Test.execute(["--enable-test-discovery"] + compilerDiagnosticFlags, packagePath: fixturePath)
             XCTAssertNoMatch(stderr, .contains("warning: '--enable-test-discovery' option is deprecated"))
         }
@@ -282,7 +282,7 @@ final class TestCommandTests: CommandsTestCase {
 
     func testBasicSwiftTestingIntegration() throws {
         try XCTSkipUnless(
-            nil != ProcessInfo.processInfo.environment["SWIFT_PM_SWIFT_TESTING_TESTS_ENABLED"],
+            nil != Environment.current["SWIFT_PM_SWIFT_TESTING_TESTS_ENABLED"],
             "Skipping \(#function) because swift-testing tests are not explicitly enabled"
         )
 
@@ -292,5 +292,21 @@ final class TestCommandTests: CommandsTestCase {
                 XCTAssertMatch(stdout, .contains(#"Test "SOME TEST FUNCTION" started"#))
             }
         }
+    }
+
+#if !canImport(Darwin)
+    func testGeneratedMainIsConcurrencySafe_XCTest() throws {
+        let strictConcurrencyFlags = ["-Xswiftc", "-strict-concurrency=complete"]
+        try fixture(name: "Miscellaneous/TestDiscovery/Simple") { fixturePath in
+            let (_, stderr) = try SwiftPM.Test.execute(strictConcurrencyFlags, packagePath: fixturePath)
+            XCTAssertNoMatch(stderr, .contains("is not concurrency-safe"))
+        }
+    }
+#endif
+
+    func testLibraryEnvironmentVariable() throws {
+      try fixture(name: "Miscellaneous/CheckTestLibraryEnvironmentVariable") { fixturePath in
+        XCTAssertNoThrow(try SwiftPM.Test.execute(packagePath: fixturePath))
+      }
     }
 }

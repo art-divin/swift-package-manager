@@ -12,8 +12,10 @@
 
 import ArgumentParser
 
+@_spi(SwiftPMInternal)
 import Basics
 
+@_spi(SwiftPMInternal)
 import CoreCommands
 
 import Dispatch
@@ -31,7 +33,6 @@ import Workspace
 import struct TSCBasic.ByteString
 import enum TSCBasic.JSON
 import class TSCBasic.Process
-import enum TSCBasic.ProcessEnv
 import var TSCBasic.stdoutStream
 import class TSCBasic.SynchronizedQueue
 import class TSCBasic.Thread
@@ -149,15 +150,30 @@ struct TestCommandOptions: ParsableArguments {
 
     /// Configure test output.
     @Option(help: ArgumentHelp("", visibility: .hidden))
-    package var testOutput: TestOutput = .default
+    public var testOutput: TestOutput = .default
 
     var enableExperimentalTestOutput: Bool {
         return testOutput == .experimentalSummary
     }
+
+    /// Path where swift-testing's JSON configuration should be read.
+    @Option(name: .customLong("experimental-configuration-path"),
+            help: .hidden)
+    var configurationPath: AbsolutePath?
+
+    /// Path where swift-testing's JSON output should be written.
+    @Option(name: .customLong("experimental-event-stream-output"),
+            help: .hidden)
+    var eventStreamOutputPath: AbsolutePath?
+
+    /// The schema version of swift-testing's JSON input/output.
+    @Option(name: .customLong("experimental-event-stream-version"),
+            help: .hidden)
+    var eventStreamVersion: Int?
 }
 
 /// Tests filtering specifier, which is used to filter tests to run.
-package enum TestCaseSpecifier {
+public enum TestCaseSpecifier {
     /// No filtering
     case none
     
@@ -172,7 +188,7 @@ package enum TestCaseSpecifier {
 }
 
 /// Different styles of test output.
-package enum TestOutput: String, ExpressibleByArgument {
+public enum TestOutput: String, ExpressibleByArgument {
     /// Whatever `xctest` emits to the console.
     case `default`
 
@@ -184,8 +200,8 @@ package enum TestOutput: String, ExpressibleByArgument {
 }
 
 /// swift-test tool namespace
-package struct SwiftTestCommand: AsyncSwiftCommand {
-    package static var configuration = CommandConfiguration(
+public struct SwiftTestCommand: AsyncSwiftCommand {
+    public static var configuration = CommandConfiguration(
         commandName: "test",
         _superCommandName: "swift",
         abstract: "Build and run tests",
@@ -196,7 +212,7 @@ package struct SwiftTestCommand: AsyncSwiftCommand {
         ],
         helpNames: [.short, .long, .customLong("help", withSingleDash: true)])
 
-    package var globalOptions: GlobalOptions {
+    public var globalOptions: GlobalOptions {
         options.globalOptions
     }
 
@@ -362,7 +378,7 @@ package struct SwiftTestCommand: AsyncSwiftCommand {
 
     // MARK: - Common implementation
 
-    package func run(_ swiftCommandState: SwiftCommandState) async throws {
+    public func run(_ swiftCommandState: SwiftCommandState) async throws {
         do {
             // Validate commands arguments
             try self.validateArguments(observabilityScope: swiftCommandState.observabilityScope)
@@ -404,7 +420,8 @@ package struct SwiftTestCommand: AsyncSwiftCommand {
         let testEnv = try TestingSupport.constructTestEnvironment(
             toolchain: toolchain,
             destinationBuildParameters: productsBuildParameters,
-            sanitizers: globalOptions.build.sanitizers
+            sanitizers: globalOptions.build.sanitizers,
+            library: library
         )
 
         let runner = TestRunner(
@@ -585,7 +602,7 @@ package struct SwiftTestCommand: AsyncSwiftCommand {
         }
     }
 
-    package init() {}
+    public init() {}
 }
 
 extension SwiftTestCommand {
@@ -685,12 +702,14 @@ extension SwiftTestCommand {
             let testEnv = try TestingSupport.constructTestEnvironment(
                 toolchain: toolchain,
                 destinationBuildParameters: productsBuildParameters,
-                sanitizers: globalOptions.build.sanitizers
+                sanitizers: globalOptions.build.sanitizers,
+                library: .swiftTesting
             )
 
+            let additionalArguments = ["--list-tests"] + CommandLine.arguments.dropFirst()
             let runner = TestRunner(
                 bundlePaths: testProducts.map(\.binaryPath),
-                additionalArguments: ["--list-tests"],
+                additionalArguments: additionalArguments,
                 cancellator: swiftCommandState.cancellator,
                 toolchain: toolchain,
                 testEnv: testEnv,
@@ -768,7 +787,7 @@ final class TestRunner {
     // The toolchain to use.
     private let toolchain: UserToolchain
 
-    private let testEnv: [String: String]
+    private let testEnv: Environment
 
     /// ObservabilityScope  to emit diagnostics.
     private let observabilityScope: ObservabilityScope
@@ -802,7 +821,7 @@ final class TestRunner {
         additionalArguments: [String],
         cancellator: Cancellator,
         toolchain: UserToolchain,
-        testEnv: [String: String],
+        testEnv: Environment,
         observabilityScope: ObservabilityScope,
         library: BuildParameters.Testing.Library
     ) {
@@ -817,7 +836,7 @@ final class TestRunner {
 
     /// Executes and returns execution status. Prints test output on standard streams if requested
     /// - Returns: Boolean indicating if test execution returned code 0, and the output stream result
-    package func test(outputHandler: @escaping (String) -> Void) -> Bool {
+    public func test(outputHandler: @escaping (String) -> Void) -> Bool {
         var success = true
         for path in self.bundlePaths {
             let testSuccess = self.test(at: path, outputHandler: outputHandler)
@@ -951,7 +970,7 @@ final class ParallelTestRunner {
 
         // command's result output goes on stdout
         // ie "swift test" should output to stdout
-        if ProcessEnv.block["SWIFTPM_TEST_RUNNER_PROGRESS_BAR"] == "lit" {
+        if Environment.current["SWIFTPM_TEST_RUNNER_PROGRESS_BAR"] == "lit" {
             self.progressAnimation = ProgressAnimation.percent(
                 stream: TSCBasic.stdoutStream,
                 verbose: false,
@@ -996,7 +1015,8 @@ final class ParallelTestRunner {
         let testEnv = try TestingSupport.constructTestEnvironment(
             toolchain: self.toolchain,
             destinationBuildParameters: self.productsBuildParameters,
-            sanitizers: self.buildOptions.sanitizers
+            sanitizers: self.buildOptions.sanitizers,
+            library: .xctest // swift-testing does not use ParallelTestRunner
         )
 
         // Enqueue all the tests.
@@ -1311,7 +1331,7 @@ extension TestCommandOptions {
 
     /// Returns the test case specifier if overridden in the env.
     private func skippedTestsOverride(fileSystem: FileSystem) -> TestCaseSpecifier? {
-        guard let override = ProcessEnv.block["_SWIFTPM_SKIP_TESTS_LIST"] else {
+        guard let override = Environment.current["_SWIFTPM_SKIP_TESTS_LIST"] else {
             return nil
         }
 
@@ -1356,11 +1376,18 @@ private func buildTestsIfNeeded(
     testProduct: String?
 ) throws -> [BuiltTestProduct] {
     let buildSystem = try swiftCommandState.createBuildSystem(
+        // TODO: Will support traits in test in a follow up PR
+        traitConfiguration: .init(),
         productsBuildParameters: productsBuildParameters,
         toolsBuildParameters: toolsBuildParameters
     )
 
-    let subset = testProduct.map(BuildSubset.product) ?? .allIncludingTests
+    let subset: BuildSubset = if let testProduct {
+        .product(testProduct)
+    } else {
+        .allIncludingTests
+    }
+
     try buildSystem.build(subset: subset)
 
     // Find the test product.

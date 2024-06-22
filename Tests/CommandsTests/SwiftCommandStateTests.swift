@@ -12,10 +12,7 @@
 
 @testable import Basics
 @testable import Build
-
-@testable 
-import CoreCommands
-
+@testable import CoreCommands
 @testable import Commands
 
 @_spi(DontAdoptOutsideOfSwiftPMExposedForBenchmarksAndTestsOnly)
@@ -26,7 +23,6 @@ import SPMTestSupport
 import XCTest
 
 import class TSCBasic.BufferedOutputByteStream
-import class TSCBasic.InMemoryFileSystem
 import protocol TSCBasic.OutputByteStream
 import var TSCBasic.stderrStream
 
@@ -322,12 +318,79 @@ final class SwiftCommandStateTests: CommandsTestCase {
         try XCTAssertMatch(plan.buildProducts.compactMap { $0 as? Build.ProductBuildDescription }.first?.linkArguments() ?? [],
                            [.anySequence, "-gnone", .anySequence])
     }
+
+    func testToolchainArgument() throws {
+        let customTargetToolchain = AbsolutePath("/path/to/toolchain")
+        let hostSwiftcPath = AbsolutePath("/usr/bin/swiftc")
+        let hostArPath = AbsolutePath("/usr/bin/ar")
+        let targetSwiftcPath = customTargetToolchain.appending(components: ["usr", "bin" , "swiftc"])
+        let targetArPath = customTargetToolchain.appending(components: ["usr", "bin", "llvm-ar"])
+
+        let fs = InMemoryFileSystem(emptyFiles: [
+            "/Pkg/Sources/exe/main.swift",
+            hostSwiftcPath.pathString,
+            hostArPath.pathString,
+            targetSwiftcPath.pathString,
+            targetArPath.pathString
+        ])
+
+        for path in [hostSwiftcPath, hostArPath, targetSwiftcPath, targetArPath,] {
+            try fs.updatePermissions(path, isExecutable: true)
+        }
+
+        let observer = ObservabilitySystem.makeForTesting()
+        let graph = try loadModulesGraph(
+            fileSystem: fs,
+            manifests: [
+                Manifest.createRootManifest(
+                    displayName: "Pkg",
+                    path: "/Pkg",
+                    targets: [TargetDescription(name: "exe")]
+                )
+            ],
+            observabilityScope: observer.topScope
+        )
+
+        let options = try GlobalOptions.parse(
+            [
+                "--toolchain", customTargetToolchain.pathString,
+                "--triple", "x86_64-unknown-linux-gnu",
+            ]
+        )
+        let swiftCommandState = try SwiftCommandState.makeMockState(
+            options: options,
+            fileSystem: fs,
+            environment: ["PATH": "/usr/bin"]
+        )
+        XCTAssertEqual(swiftCommandState.originalWorkingDirectory, fs.currentWorkingDirectory)
+        XCTAssertEqual(
+            try swiftCommandState.getTargetToolchain().swiftCompilerPath,
+            targetSwiftcPath
+        )
+        XCTAssertEqual(
+            try swiftCommandState.getTargetToolchain().swiftSDK.toolset.knownTools[.swiftCompiler]?.path,
+            nil
+        )
+        let plan = try BuildPlan(
+            destinationBuildParameters: swiftCommandState.productsBuildParameters,
+            toolsBuildParameters: swiftCommandState.toolsBuildParameters,
+            graph: graph,
+            fileSystem: fs,
+            observabilityScope: observer.topScope
+        )
+
+        let arguments = try plan.buildProducts.compactMap { $0 as? Build.ProductBuildDescription }.first?.linkArguments() ?? []
+
+        XCTAssertMatch(arguments, [.contains("/path/to/toolchain")])
+    }
 }
 
 extension SwiftCommandState {
     static func makeMockState(
         outputStream: OutputByteStream = stderrStream,
-        options: GlobalOptions
+        options: GlobalOptions,
+        fileSystem: any FileSystem = localFileSystem,
+        environment: Environment = .current
     ) throws -> SwiftCommandState {
         return try SwiftCommandState(
             outputStream: outputStream,
@@ -346,6 +409,10 @@ extension SwiftCommandState {
                     fileSystem: $0,
                     observabilityScope: $1
                 )
-            })
+            },
+            hostTriple: .arm64Linux,
+            fileSystem: fileSystem,
+            environment: environment
+        )
     }
 }

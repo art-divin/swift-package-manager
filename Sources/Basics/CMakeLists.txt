@@ -25,10 +25,13 @@ add_library(Basics
   Concurrency/ThreadSafeKeyValueStore.swift
   Concurrency/TokenBucket.swift
   DispatchTimeInterval+Extensions.swift
-  EnvironmentVariables.swift
+  Environment/Environment.swift
+  Environment/EnvironmentKey.swift
+  Environment/EnvironmentShims.swift
   Errors.swift
   FileSystem/AbsolutePath.swift
   FileSystem/FileSystem+Extensions.swift
+  FileSystem/InMemoryFileSystem.swift
   FileSystem/NativePathExtensions.swift
   FileSystem/RelativePath.swift
   FileSystem/TemporaryFile.swift
@@ -36,6 +39,7 @@ add_library(Basics
   FileSystem/VFSOverlay.swift
   Graph/AdjacencyMatrix.swift
   Graph/DirectedGraph.swift
+  Graph/GraphAlgorithms.swift
   Graph/UndirectedGraph.swift
   SourceControlURL.swift
   HTTPClient/HTTPClient.swift

@@ -11,9 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
-
 import CoreCommands
-
 import PackageModel
 import SPMBuildCore
 import Workspace
@@ -123,7 +121,8 @@ enum TestingSupport {
                     experimentalTestOutput: experimentalTestOutput,
                     library: .xctest
                 ).productsBuildParameters,
-                sanitizers: sanitizers
+                sanitizers: sanitizers,
+                library: .xctest
             )
 
             try TSCBasic.Process.checkNonZeroExit(arguments: args, environment: env)
@@ -138,7 +137,8 @@ enum TestingSupport {
                 shouldSkipBuilding: shouldSkipBuilding,
                 library: .xctest
             ).productsBuildParameters,
-            sanitizers: sanitizers
+            sanitizers: sanitizers,
+            library: .xctest
         )
         args = [path.description, "--dump-tests-json"]
         let data = try Process.checkNonZeroExit(arguments: args, environment: env)
@@ -151,9 +151,10 @@ enum TestingSupport {
     static func constructTestEnvironment(
         toolchain: UserToolchain,
         destinationBuildParameters buildParameters: BuildParameters,
-        sanitizers: [Sanitizer]
-    ) throws -> EnvironmentVariables {
-        var env = EnvironmentVariables.process()
+        sanitizers: [Sanitizer],
+        library: BuildParameters.Testing.Library
+    ) throws -> Environment {
+        var env = Environment.current
 
         // If the standard output or error stream is NOT a TTY, set the NO_COLOR
         // environment variable. This environment variable is a de facto
@@ -162,6 +163,10 @@ enum TestingSupport {
         if !stdoutStream.isTTY || !stderrStream.isTTY {
             env["NO_COLOR"] = "1"
         }
+
+        // Set an environment variable to indicate which library's test product
+        // is being executed.
+        env["SWIFT_PM_TEST_LIBRARY"] = String(describing: library)
 
         // Add the code coverage related variables.
         if buildParameters.testingParameters.enableCodeCoverage {
@@ -178,7 +183,7 @@ enum TestingSupport {
         #if !os(macOS)
         #if os(Windows)
         if let location = toolchain.xctestPath {
-            env.prependPath("Path", value: location.pathString)
+            env.prependPath(key: .path, value: location.pathString)
         }
         #endif
         return env
@@ -186,8 +191,8 @@ enum TestingSupport {
         // Add the sdk platform path if we have it.
         if let sdkPlatformFrameworksPath = try? SwiftSDK.sdkPlatformFrameworkPaths() {
             // appending since we prefer the user setting (if set) to the one we inject
-            env.appendPath("DYLD_FRAMEWORK_PATH", value: sdkPlatformFrameworksPath.fwk.pathString)
-            env.appendPath("DYLD_LIBRARY_PATH", value: sdkPlatformFrameworksPath.lib.pathString)
+            env.appendPath(key: "DYLD_FRAMEWORK_PATH", value: sdkPlatformFrameworksPath.fwk.pathString)
+            env.appendPath(key: "DYLD_LIBRARY_PATH", value: sdkPlatformFrameworksPath.lib.pathString)
         }
 
         // Fast path when no sanitizers are enabled.

@@ -19,13 +19,21 @@ private import SPMBuildCore
 
 // FIXME: should import these module with `private` or `internal` access control
 import class Build.BuildPlan
-import class Build.ClangTargetBuildDescription
-import class Build.SwiftTargetBuildDescription
+import class Build.ClangModuleBuildDescription
+import class Build.SwiftModuleBuildDescription
 import struct PackageGraph.ResolvedModule
 import struct PackageGraph.ModulesGraph
+import enum PackageGraph.BuildTriple
+
+public typealias BuildTriple = PackageGraph.BuildTriple
 
 public protocol BuildTarget {
     var sources: [URL] { get }
+
+    /// The name of the target. It should be possible to build a target by passing this name to `swift build --target`
+    var name: String { get }
+
+    var buildTriple: BuildTriple { get }
 
     /// Whether the target is part of the root package that the user opened or if it's part of a package dependency.
     var isPartOfRootPackage: Bool { get }
@@ -34,16 +42,24 @@ public protocol BuildTarget {
 }
 
 private struct WrappedClangTargetBuildDescription: BuildTarget {
-    private let description: ClangTargetBuildDescription
+    private let description: ClangModuleBuildDescription
     let isPartOfRootPackage: Bool
 
-    init(description: ClangTargetBuildDescription, isPartOfRootPackage: Bool) {
+    init(description: ClangModuleBuildDescription, isPartOfRootPackage: Bool) {
         self.description = description
         self.isPartOfRootPackage = isPartOfRootPackage
     }
 
     public var sources: [URL] {
         return (try? description.compilePaths().map { URL(fileURLWithPath: $0.source.pathString) }) ?? []
+    }
+
+    public var name: String {
+        return description.clangTarget.name
+    }
+
+    public var buildTriple: BuildTriple {
+        return description.target.buildTriple
     }
 
     public func compileArguments(for fileURL: URL) throws -> [String] {
@@ -55,12 +71,20 @@ private struct WrappedClangTargetBuildDescription: BuildTarget {
 }
 
 private struct WrappedSwiftTargetBuildDescription: BuildTarget {
-    private let description: SwiftTargetBuildDescription
+    private let description: SwiftModuleBuildDescription
     let isPartOfRootPackage: Bool
 
-    init(description: SwiftTargetBuildDescription, isPartOfRootPackage: Bool) {
+    init(description: SwiftModuleBuildDescription, isPartOfRootPackage: Bool) {
         self.description = description
         self.isPartOfRootPackage = isPartOfRootPackage
+    }
+
+    public var name: String {
+        return description.target.name
+    }
+
+    public var buildTriple: BuildTriple {
+        return description.target.buildTriple
     }
 
     var sources: [URL] {
@@ -108,6 +132,14 @@ public struct BuildDescription {
                 )
             }
             return nil
+        }
+    }
+
+    /// Returns all targets within the module graph in topological order, starting with low-level targets (that have no
+    /// dependencies).
+    public func allTargetsInTopologicalOrder(in modulesGraph: ModulesGraph) throws -> [BuildTarget] {
+        try modulesGraph.allModulesInTopologicalOrder.compactMap {
+            getBuildTarget(for: $0, in: modulesGraph)
         }
     }
 }

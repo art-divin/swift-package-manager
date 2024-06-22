@@ -12,7 +12,7 @@
 
 import SPMBuildCore
 
-package func generateTestObservationCode(buildParameters: BuildParameters) -> String {
+public func generateTestObservationCode(buildParameters: BuildParameters) -> String {
     guard buildParameters.triple.supportsTestSummary else {
         return ""
     }
@@ -132,6 +132,8 @@ package func generateTestObservationCode(buildParameters: BuildParameters) -> St
         @_exported import WinSDK
         #elseif os(WASI)
         @_exported import WASILibc
+        #elseif canImport(Android)
+        @_exported import Android
         #else
         @_exported import Darwin.C
         #endif

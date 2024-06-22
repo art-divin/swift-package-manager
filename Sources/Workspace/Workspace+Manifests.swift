@@ -16,6 +16,7 @@ import struct Basics.InternalError
 import class Basics.ObservabilityScope
 import struct Basics.SwiftVersion
 import func Basics.temp_await
+import func Basics.depthFirstSearch
 import class Basics.ThreadSafeKeyValueStore
 import class Dispatch.DispatchGroup
 import struct Dispatch.DispatchTime
@@ -199,22 +200,26 @@ extension Workspace {
             })
 
             var inputIdentities: OrderedCollections.OrderedSet<PackageReference> = []
-            let inputNodes: [GraphLoadingNode] = root.packages.map { identity, package in
+            let inputNodes: [GraphLoadingNode] = try root.packages.map { identity, package in
                 inputIdentities.append(package.reference)
-                let node = GraphLoadingNode(
+                let node = try GraphLoadingNode(
                     identity: identity,
                     manifest: package.manifest,
-                    productFilter: .everything
+                    productFilter: .everything,
+                    // We are enabling all traits of the root packages in the workspace integration for now
+                    enabledTraits: Set(package.manifest.traits.map { $0.name })
                 )
                 return node
             } + root.dependencies.compactMap { dependency in
                 let package = dependency.packageRef
                 inputIdentities.append(package)
-                return manifestsMap[dependency.identity].map { manifest in
-                    GraphLoadingNode(
+                return try manifestsMap[dependency.identity].map { manifest in
+                    try GraphLoadingNode(
                         identity: dependency.identity,
                         manifest: manifest,
-                        productFilter: dependency.productFilter
+                        productFilter: dependency.productFilter,
+                        // We are enabling all traits of the root packages in the workspace integration for now
+                        enabledTraits: Set(manifest.traits.map { $0.name })
                     )
                 }
             }
@@ -222,8 +227,8 @@ extension Workspace {
             let topLevelDependencies = root.packages.flatMap { $1.manifest.dependencies.map(\.packageRef) }
 
             var requiredIdentities: OrderedCollections.OrderedSet<PackageReference> = []
-            _ = transitiveClosure(inputNodes) { node in
-                node.manifest.dependenciesRequired(for: node.productFilter).compactMap { dependency in
+            _ = try transitiveClosure(inputNodes) { node in
+                try node.manifest.dependenciesRequired(for: node.productFilter).compactMap { dependency in
                     let package = dependency.packageRef
                     let (inserted, index) = requiredIdentities.append(package)
                     if !inserted {
@@ -264,11 +269,13 @@ extension Workspace {
                             """)
                         }
                     }
-                    return manifestsMap[dependency.identity].map { manifest in
-                        GraphLoadingNode(
+                    return try manifestsMap[dependency.identity].map { manifest in
+                        try GraphLoadingNode(
                             identity: dependency.identity,
                             manifest: manifest,
-                            productFilter: dependency.productFilter
+                            productFilter: dependency.productFilter,
+                            // We are enabling all traits of the root packages in the workspace integration for now
+                            enabledTraits: Set(manifest.traits.map { $0.name })
                         )
                     }
                 }
@@ -494,12 +501,7 @@ extension Workspace {
         // Continue to load the rest of the manifest for this graph
         // Creates a map of loaded manifests. We do this to avoid reloading the shared nodes.
         var loadedManifests = firstLevelManifests
-        // Compute the transitive closure of available dependencies.
-        let topologicalSortInput = topLevelManifests.map { identity, manifest in KeyedPair(
-            manifest,
-            key: Key(identity: identity, productFilter: .everything)
-        ) }
-        let topologicalSortSuccessors: (KeyedPair<Manifest, Key>) throws -> [KeyedPair<Manifest, Key>] = { pair in
+        let successorManifests: (KeyedPair<Manifest, Key>) throws -> [KeyedPair<Manifest, Key>] = { pair in
             // optimization: preload manifest we know about in parallel
             let dependenciesRequired = pair.item.dependenciesRequired(for: pair.key.productFilter)
             let dependenciesToLoad = dependenciesRequired.map(\.packageRef)
@@ -527,36 +529,26 @@ extension Workspace {
             }
         }
 
-        // Look for any cycle in the dependencies.
-        if let cycle = try findCycle(topologicalSortInput, successors: topologicalSortSuccessors) {
-            observabilityScope.emit(
-                error: "cyclic dependency declaration found: " +
-                    (cycle.path + cycle.cycle).map(\.key.identity.description).joined(separator: " -> ") +
-                    " -> " + cycle.cycle[0].key.identity.description
-            )
-            // return partial results
-            return DependencyManifests(
-                root: root,
-                dependencies: [],
-                workspace: self,
-                observabilityScope: observabilityScope
-            )
-        }
-        let allManifestsWithPossibleDuplicates = try topologicalSort(
-            topologicalSortInput,
-            successors: topologicalSortSuccessors
-        )
-
-        // merge the productFilter of the same package (by identity)
-        var deduplication = [PackageIdentity: Int]()
         var allManifests = [(identity: PackageIdentity, manifest: Manifest, productFilter: ProductFilter)]()
-        for pair in allManifestsWithPossibleDuplicates {
-            if let index = deduplication[pair.key.identity] {
-                let productFilter = allManifests[index].productFilter.merge(pair.key.productFilter)
-                allManifests[index] = (pair.key.identity, pair.item, productFilter)
-            } else {
+        do {
+            let manifestGraphRoots = topLevelManifests.map { identity, manifest in
+                KeyedPair(
+                    manifest,
+                    key: Key(identity: identity, productFilter: .everything)
+                )
+            }
+
+            var deduplication = [PackageIdentity: Int]()
+            try depthFirstSearch(
+                manifestGraphRoots,
+                successors: successorManifests
+            ) { pair in
                 deduplication[pair.key.identity] = allManifests.count
                 allManifests.append((pair.key.identity, pair.item, pair.key.productFilter))
+            } onDuplicate: { old, new in
+                let index = deduplication[old.key.identity]!
+                let productFilter = allManifests[index].productFilter.merge(new.key.productFilter)
+                allManifests[index] = (new.key.identity, new.item, productFilter)
             }
         }
 

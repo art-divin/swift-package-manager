@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2014-2022 Apple Inc. and the Swift project authors
+// Copyright (c) 2014-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -11,13 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
-
-@testable 
-import CoreCommands
-
-@testable 
-import Commands
-
+@testable import CoreCommands
+@testable import Commands
 import Foundation
 
 @_spi(DontAdoptOutsideOfSwiftPMExposedForBenchmarksAndTestsOnly)
@@ -41,7 +36,7 @@ final class PackageCommandTests: CommandsTestCase {
     private func execute(
         _ args: [String] = [],
         packagePath: AbsolutePath? = nil,
-        env: EnvironmentVariables? = nil
+        env: Environment? = nil
     ) throws -> (stdout: String, stderr: String) {
         var environment = env ?? [:]
         // don't ignore local packages when caching
@@ -75,6 +70,11 @@ final class PackageCommandTests: CommandsTestCase {
         XCTAssertMatch(stdout, .contains("Swift Package Manager"))
     }
 	
+    func testCompletionTool() throws {
+        let stdout = try execute(["completion-tool", "--help"]).stdout
+        XCTAssertMatch(stdout, .contains("OVERVIEW: Completion command (for shell completions)"))
+    }
+
 	func testInitOverview() throws {
 		let stdout = try execute(["init", "--help"]).stdout
 		XCTAssertMatch(stdout, .contains("OVERVIEW: Initialize a new package"))
@@ -647,6 +647,7 @@ final class PackageCommandTests: CommandsTestCase {
 
         let output = BufferedOutputByteStream()
         SwiftPackageCommand.ShowDependencies.dumpDependenciesOf(
+            graph: graph,
             rootPackage: graph.rootPackages[graph.rootPackages.startIndex],
             mode: .dot,
             on: output
@@ -848,6 +849,38 @@ final class PackageCommandTests: CommandsTestCase {
             XCTAssertMatch(contents, .contains(#"dependencies:"#))
             XCTAssertMatch(contents, .contains(#""MyLib""#))
             XCTAssertMatch(contents, .contains(#""OtherLib""#))
+        }
+    }
+
+    func testPackageAddTargetDependency() throws {
+        try testWithTemporaryDirectory { tmpPath in
+            let fs = localFileSystem
+            let path = tmpPath.appending("PackageB")
+            try fs.createDirectory(path)
+
+            try fs.writeFileContents(path.appending("Package.swift"), string:
+                """
+                // swift-tools-version: 5.9
+                import PackageDescription
+                let package = Package(
+                    name: "client",
+                    targets: [ .target(name: "library") ]
+                )
+                """
+            )
+            try localFileSystem.writeFileContents(path.appending(components: "Sources", "library", "library.swift"), string:
+                """
+                public func Foo() { }
+                """
+            )
+
+            _ = try execute(["add-target-dependency", "--package", "other-package", "other-product", "library"], packagePath: path)
+
+            let manifest = path.appending("Package.swift")
+            XCTAssertFileExists(manifest)
+            let contents: String = try fs.readFileContents(manifest)
+
+            XCTAssertMatch(contents, .contains(#".product(name: "other-product", package: "other-package"#))
         }
     }
 
@@ -1809,7 +1842,11 @@ final class PackageCommandTests: CommandsTestCase {
                 </dict>
                 """
             )
-            let hostTriple = try UserToolchain(swiftSDK: .hostSwiftSDK()).targetTriple
+            let environment = Environment.current
+            let hostTriple = try UserToolchain(
+                swiftSDK: .hostSwiftSDK(environment: environment),
+                environment: environment
+            ).targetTriple
             let hostTripleString = if hostTriple.isDarwin() {
                 hostTriple.tripleString(forPlatformVersion: "")
             } else {

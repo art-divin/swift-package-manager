@@ -225,6 +225,7 @@ def parse_build_args(args):
 
     args.swiftc_path = get_swiftc_path(args)
     args.clang_path = get_tool_path(args, "clang")
+    args.clangxx_path = get_tool_path(args, "clang++")
     if not args.skip_cmake_bootstrap:
         args.cmake_path = get_tool_path(args, "cmake")
         args.ninja_path = get_tool_path(args, "ninja")
@@ -550,7 +551,7 @@ def build_llbuild(args):
 
     flags = [
         "-DCMAKE_C_COMPILER:=%s" % (args.clang_path),
-        "-DCMAKE_CXX_COMPILER:=%s" % (args.clang_path),
+        "-DCMAKE_CXX_COMPILER:=%s" % (args.clangxx_path),
         "-DCMAKE_AR:PATH=%s" % (args.ar_path),
         "-DCMAKE_RANLIB:PATH=%s" % (args.ranlib_path),
         "-DLLBUILD_SUPPORT_BINDINGS:=Swift",
@@ -747,8 +748,6 @@ def get_swiftpm_env_cmd(args):
         env_cmd.append("SWIFTPM_LLBUILD_FWK=1")
     env_cmd.append("SWIFTCI_USE_LOCAL_DEPS=1")
     env_cmd.append("SWIFTPM_MACOS_DEPLOYMENT_TARGET=%s" % g_macos_deployment_target)
-    # Disable Swift 6 mode in swift-syntax to work around rdar://126952308
-    env_cmd.append("SWIFTSYNTAX_DISABLE_SWIFT_6_MODE=1")
 
     if not '-macosx' in args.build_target and args.command == 'install':
         env_cmd.append("SWIFTCI_INSTALL_RPATH_OS=%s" % args.platform_path.group(2))

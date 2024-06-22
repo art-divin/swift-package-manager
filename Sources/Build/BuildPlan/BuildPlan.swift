@@ -25,8 +25,6 @@ import SPMBuildCore
 import SwiftDriver
 #endif
 
-import enum TSCBasic.ProcessEnv
-
 import enum TSCUtility.Diagnostics
 import var TSCUtility.verbosity
 
@@ -91,11 +89,11 @@ extension [String] {
 
 extension BuildParameters {
     /// Returns the directory to be used for module cache.
-    package var moduleCache: AbsolutePath {
+    public var moduleCache: AbsolutePath {
         get throws {
             // FIXME: We use this hack to let swiftpm's functional test use shared
             // cache so it doesn't become painfully slow.
-            if let path = ProcessEnv.block["SWIFTPM_TESTS_MODULECACHE"] {
+            if let path = Environment.current["SWIFTPM_TESTS_MODULECACHE"] {
                 return try AbsolutePath(validating: path)
             }
             return buildPath.appending("ModuleCache")
@@ -128,7 +126,7 @@ extension BuildParameters {
     }
 
     /// Computes the target triple arguments for a given resolved target.
-    package func tripleArgs(for target: ResolvedModule) throws -> [String] {
+    public func tripleArgs(for target: ResolvedModule) throws -> [String] {
         // confusingly enough this is the triple argument, not the target argument
         var args = ["-target"]
 
@@ -165,11 +163,11 @@ extension BuildParameters {
 
 /// A build plan for a package graph.
 public class BuildPlan: SPMBuildCore.BuildPlan {
-    package enum Error: Swift.Error, CustomStringConvertible, Equatable {
+    public enum Error: Swift.Error, CustomStringConvertible, Equatable {
         /// There is no buildable target in the graph.
         case noBuildableTarget
 
-        package var description: String {
+        public var description: String {
             switch self {
             case .noBuildableTarget:
                 return """
@@ -187,20 +185,20 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
     public let toolsBuildParameters: BuildParameters
 
     /// The package graph.
-    package let graph: ModulesGraph
+    public let graph: ModulesGraph
 
     /// The target build description map.
-    package let targetMap: [ResolvedModule.ID: TargetBuildDescription]
+    public let targetMap: [ResolvedModule.ID: ModuleBuildDescription]
 
     /// The product build description map.
-    package let productMap: [ResolvedProduct.ID: ProductBuildDescription]
+    public let productMap: [ResolvedProduct.ID: ProductBuildDescription]
 
     /// The plugin descriptions. Plugins are represented in the package graph
     /// as targets, but they are not directly included in the build graph.
-    package let pluginDescriptions: [PluginDescription]
+    public let pluginDescriptions: [PluginBuildDescription]
 
     /// The build targets.
-    package var targets: AnySequence<TargetBuildDescription> {
+    public var targets: AnySequence<ModuleBuildDescription> {
         AnySequence(self.targetMap.values)
     }
 
@@ -210,22 +208,23 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
     }
 
     /// The results of invoking any build tool plugins used by targets in this build.
-    package let buildToolPluginInvocationResults: [ResolvedModule.ID: [BuildToolPluginInvocationResult]]
+    public let buildToolPluginInvocationResults: [ResolvedModule.ID: [BuildToolPluginInvocationResult]]
 
     /// The results of running any prebuild commands for the targets in this build.  This includes any derived
     /// source files as well as directories to which any changes should cause us to reevaluate the build plan.
-    package let prebuildCommandResults: [ResolvedModule.ID: [PrebuildCommandResult]]
+    public let prebuildCommandResults: [ResolvedModule.ID: [PrebuildCommandResult]]
 
-    package private(set) var derivedTestTargetsMap: [ResolvedProduct.ID: [ResolvedModule]] = [:]
+    @_spi(SwiftPMInternal)
+    public private(set) var derivedTestTargetsMap: [ResolvedProduct.ID: [ResolvedModule]] = [:]
 
     /// Cache for pkgConfig flags.
-    private var pkgConfigCache = [SystemLibraryTarget: (cFlags: [String], libs: [String])]()
+    private var pkgConfigCache = [SystemLibraryModule: (cFlags: [String], libs: [String])]()
 
     /// Cache for library information.
-    private var externalLibrariesCache = [BinaryTarget: [LibraryInfo]]()
+    private var externalLibrariesCache = [BinaryModule: [LibraryInfo]]()
 
     /// Cache for tools information.
-    var externalExecutablesCache = [BinaryTarget: [ExecutableInfo]]()
+    var externalExecutablesCache = [BinaryModule: [ExecutableInfo]]()
 
     /// Whether to disable sandboxing (e.g. for macros).
     private let shouldDisableSandbox: Bool
@@ -235,28 +234,6 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
 
     /// ObservabilityScope with which to emit diagnostics
     let observabilityScope: ObservabilityScope
-
-    @available(*, deprecated, renamed: "init(destinationBuildParameters:toolsBuildParameters:graph:)")
-    public convenience init(
-        buildParameters: BuildParameters,
-        graph: ModulesGraph,
-        additionalFileRules: [FileRuleDescription] = [],
-        buildToolPluginInvocationResults: [ResolvedModule.ID: [BuildToolPluginInvocationResult]] = [:],
-        prebuildCommandResults: [ResolvedModule.ID: [PrebuildCommandResult]] = [:],
-        fileSystem: any FileSystem,
-        observabilityScope: ObservabilityScope
-    ) throws {
-        try self.init(
-            destinationBuildParameters: buildParameters,
-            toolsBuildParameters: buildParameters,
-            graph: graph,
-            additionalFileRules: additionalFileRules,
-            buildToolPluginInvocationResults: buildToolPluginInvocationResults,
-            prebuildCommandResults: prebuildCommandResults,
-            fileSystem: fileSystem,
-            observabilityScope: observabilityScope
-        )
-    }
 
     @available(*, deprecated, renamed: "init(destinationBuildParameters:toolsBuildParameters:graph:fileSystem:observabilityScope:)")
     public convenience init(
@@ -326,7 +303,7 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
         }
         let macroProductsByTarget = productMap.values.filter { $0.product.type == .macro }
             .reduce(into: [ResolvedModule.ID: ResolvedProduct]()) {
-                if let target = $1.product.targets.first {
+                if let target = $1.product.modules.first {
                     $0[target.id] = $1.product
                 }
             }
@@ -335,10 +312,10 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
         // Plugin targets are noted, since they need to be compiled, but they do
         // not get directly incorporated into the build description that will be
         // given to LLBuild.
-        var targetMap = [ResolvedModule.ID: TargetBuildDescription]()
-        var pluginDescriptions = [PluginDescription]()
+        var targetMap = [ResolvedModule.ID: ModuleBuildDescription]()
+        var pluginDescriptions = [PluginBuildDescription]()
         var shouldGenerateTestObservation = true
-        for target in graph.allTargets.sorted(by: { $0.name < $1.name }) {
+        for target in graph.allModules.sorted(by: { $0.name < $1.name }) {
             let buildParameters: BuildParameters
             switch target.buildTriple {
             case .tools:
@@ -354,7 +331,7 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
                 }
 
                 switch dependency {
-                case .target: break
+                case .module: break
                 case .product(let product, _):
                     if buildParameters.triple.isDarwin() {
                         try BuildPlan.validateDeploymentVersionOfProductDependency(
@@ -372,14 +349,22 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
             let toolsVersion = graph.package(for: target)?.manifest.toolsVersion ?? .v5_5
 
             switch target.underlying {
-            case is SwiftTarget:
+            case is SwiftModule:
                 guard let package = graph.package(for: target) else {
                     throw InternalError("package not found for \(target)")
                 }
 
-                let requiredMacroProducts = try target.recursiveTargetDependencies()
+                let requiredMacroProducts = try target.recursiveModuleDependencies()
                     .filter { $0.underlying.type == .macro }
-                    .compactMap { macroProductsByTarget[$0.id] }
+                    .compactMap {
+                        guard let product = macroProductsByTarget[$0.id],
+                              let description = productMap[product.id] else
+                        {
+                            throw InternalError("macro product not found for \($0)")
+                        }
+
+                        return description.buildDescription
+                    }
 
                 var generateTestObservation = false
                 if target.type == .test && shouldGenerateTestObservation {
@@ -388,13 +373,12 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
                 }
 
                 targetMap[target.id] = try .swift(
-                    SwiftTargetBuildDescription(
+                    SwiftModuleBuildDescription(
                         package: package,
                         target: target,
                         toolsVersion: toolsVersion,
                         additionalFileRules: additionalFileRules,
-                        destinationBuildParameters: buildParameters,
-                        toolsBuildParameters: toolsBuildParameters,
+                        buildParameters: buildParameters,
                         buildToolPluginInvocationResults: buildToolPluginInvocationResults[target.id] ?? [],
                         prebuildCommandResults: prebuildCommandResults[target.id] ?? [],
                         requiredMacroProducts: requiredMacroProducts,
@@ -404,13 +388,13 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
                         observabilityScope: observabilityScope
                     )
                 )
-            case is ClangTarget:
+            case is ClangModule:
                 guard let package = graph.package(for: target) else {
                     throw InternalError("package not found for \(target)")
                 }
 
                 targetMap[target.id] = try .clang(
-                    ClangTargetBuildDescription(
+                    ClangModuleBuildDescription(
                         package: package,
                         target: target,
                         toolsVersion: toolsVersion,
@@ -422,18 +406,18 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
                         observabilityScope: observabilityScope
                     )
                 )
-            case is PluginTarget:
+            case is PluginModule:
                 guard let package = graph.package(for: target) else {
                     throw InternalError("package not found for \(target)")
                 }
-                try pluginDescriptions.append(PluginDescription(
-                    target: target,
-                    products: package.products.filter { $0.targets.contains(id: target.id) },
+                try pluginDescriptions.append(PluginBuildDescription(
+                    module: target,
+                    products: package.products.filter { $0.modules.contains(id: target.id) },
                     package: package,
                     toolsVersion: toolsVersion,
                     fileSystem: fileSystem
                 ))
-            case is SystemLibraryTarget, is BinaryTarget, is ProvidedLibraryTarget:
+            case is SystemLibraryModule, is BinaryModule, is ProvidedLibraryModule:
                 break
             default:
                 throw InternalError("unhandled \(target.underlying)")
@@ -453,9 +437,11 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
         // Plan the derived test targets, if necessary.
         if destinationBuildParameters.testingParameters.testProductStyle.requiresAdditionalDerivedTestTargets {
             let derivedTestTargets = try Self.makeDerivedTestTargets(
+                testProducts: productMap.values.filter {
+                    $0.product.type == .test
+                },
                 destinationBuildParameters: destinationBuildParameters,
                 toolsBuildParameters: toolsBuildParameters,
-                graph,
                 shouldDisableSandbox: self.shouldDisableSandbox,
                 self.fileSystem,
                 self.observabilityScope
@@ -571,8 +557,8 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
         }
 
         // Add search paths from the system library targets.
-        for target in self.graph.reachableTargets {
-            if let systemLib = target.underlying as? SystemLibraryTarget {
+        for target in self.graph.reachableModules {
+            if let systemLib = target.underlying as? SystemLibraryModule {
                 try arguments.append(contentsOf: self.pkgConfig(for: systemLib).cFlags)
                 // Add the path to the module map.
                 arguments += ["-I", systemLib.moduleMapPath.parentDirectory.pathString]
@@ -594,7 +580,7 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
         arguments.append("-l" + replProductName)
 
         // The graph should have the REPL product.
-        assert(self.graph.allProducts.first(where: { $0.name == replProductName }) != nil)
+        assert(self.graph.product(for: replProductName, destination: .destination) != nil)
 
         // Add the search path to the directory containing the modulemap file.
         for target in self.targets {
@@ -608,8 +594,8 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
         }
 
         // Add search paths from the system library targets.
-        for target in self.graph.reachableTargets {
-            if let systemLib = target.underlying as? SystemLibraryTarget {
+        for target in self.graph.reachableModules {
+            if let systemLib = target.underlying as? SystemLibraryModule {
                 arguments += try self.pkgConfig(for: systemLib).cFlags
             }
         }
@@ -618,7 +604,7 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
     }
 
     /// Get pkgConfig arguments for a system library target.
-    func pkgConfig(for target: SystemLibraryTarget) throws -> (cFlags: [String], libs: [String]) {
+    func pkgConfig(for target: SystemLibraryModule) throws -> (cFlags: [String], libs: [String]) {
         // If we already have these flags, we're done.
         if let flags = pkgConfigCache[target] {
             return flags
@@ -654,10 +640,19 @@ public class BuildPlan: SPMBuildCore.BuildPlan {
     }
 
     /// Extracts the library information from an XCFramework.
-    func parseXCFramework(for binaryTarget: BinaryTarget, triple: Basics.Triple) throws -> [LibraryInfo] {
+    func parseXCFramework(for binaryTarget: BinaryModule, triple: Basics.Triple) throws -> [LibraryInfo] {
         try self.externalLibrariesCache.memoize(key: binaryTarget) {
             try binaryTarget.parseXCFrameworks(for: triple, fileSystem: self.fileSystem)
         }
+    }
+
+    /// Determines the arguments needed to run `swift-symbolgraph-extract` for
+    /// a particular module.
+    public func symbolGraphExtractArguments(for module: ResolvedModule) throws -> [String] {
+        guard let description = self.targetMap[module.id] else {
+            throw InternalError("Expected description for module \(module)")
+        }
+        return try description.symbolGraphExtractArguments()
     }
 }
 
@@ -752,7 +747,7 @@ extension ResolvedProduct {
     }
 
     private var isBinaryOnly: Bool {
-        self.targets.filter { !($0.underlying is BinaryTarget) }.isEmpty
+        self.modules.filter { !($0.underlying is BinaryModule) }.isEmpty
     }
 
     private var isPlugin: Bool {

@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+@_spi(SwiftPMInternal)
 import Basics
 import Dispatch
 import class Foundation.JSONEncoder
@@ -18,17 +19,17 @@ import class Foundation.NSDictionary
 import PackageGraph
 import PackageModel
 
+@_spi(SwiftPMInternal)
 import SPMBuildCore
 
 import func TSCBasic.memoize
 import protocol TSCBasic.OutputByteStream
 import class TSCBasic.Process
-import enum TSCBasic.ProcessEnv
 import func TSCBasic.withTemporaryFile
 
 import enum TSCUtility.Diagnostics
 
-package final class XcodeBuildSystem: SPMBuildCore.BuildSystem {
+public final class XcodeBuildSystem: SPMBuildCore.BuildSystem {
     private let buildParameters: BuildParameters
     private let packageGraphLoader: () throws -> ModulesGraph
     private let logLevel: Basics.Diagnostic.Severity
@@ -92,7 +93,7 @@ package final class XcodeBuildSystem: SPMBuildCore.BuildSystem {
         self.fileSystem = fileSystem
         self.observabilityScope = observabilityScope.makeChildScope(description: "Xcode Build System")
 
-        if let xcbuildTool = ProcessEnv.block["XCBUILD_TOOL"] {
+        if let xcbuildTool = Environment.current["XCBUILD_TOOL"] {
             xcbuildPath = try AbsolutePath(validating: xcbuildTool)
         } else {
             let xcodeSelectOutput = try TSCBasic.Process.popen(args: "xcode-select", "-p").utf8Output().spm_chomp()
@@ -197,7 +198,7 @@ package final class XcodeBuildSystem: SPMBuildCore.BuildSystem {
 
         // We need to sanitize the environment we are passing to XCBuild because we could otherwise interfere with its
         // linked dependencies e.g. when we have a custom swift-driver dynamic library in the path.
-        var sanitizedEnvironment = ProcessEnv.vars
+        var sanitizedEnvironment = Environment.current
         sanitizedEnvironment["DYLD_LIBRARY_PATH"] = nil
 
         let process = TSCBasic.Process(
@@ -380,9 +381,9 @@ extension PIFBuilderParameters {
 extension BuildSubset {
     var pifTargetName: String {
         switch self {
-        case .product(let name):
+        case .product(let name, _):
             PackagePIFProjectBuilder.targetName(for: name)
-        case .target(let name):
+        case .target(let name, _):
             name
         case .allExcludingTests:
             PIFBuilder.allExcludingTestsTargetName

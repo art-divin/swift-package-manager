@@ -178,7 +178,9 @@ final class PluginTests: XCTestCase {
         }
     }
 
-    func testBuildToolWithoutOutputs() throws {
+    func testBuildToolWithoutOutputs() async throws {
+        try await UserToolchain.default.skipUnlessAtLeastSwift6()
+
         // Only run the test if the environment in which we're running actually supports Swift concurrency (which the plugin APIs require).
         try XCTSkipIf(!UserToolchain.default.supportsSwiftConcurrency(), "skipping because test environment doesn't support concurrency")
 
@@ -224,7 +226,7 @@ final class PluginTests: XCTestCase {
 
         try testWithTemporaryDirectory { tmpPath in
             let packageDir = tmpPath.appending(components: "MyPackage")
-            let pathOfGeneratedFile = packageDir.appending(components: [".build", "plugins", "outputs", "mypackage", "SomeTarget", "Plugin", "best.txt"])
+            let pathOfGeneratedFile = packageDir.appending(components: [".build", "plugins", "outputs", "mypackage", "SomeTarget", "destination", "Plugin", "best.txt"])
 
             try createPackageUnderTest(packageDir: packageDir, toolsVersion: .v5_9)
             let (_, stderr) = try executeSwiftBuild(packageDir, env: ["SWIFT_DRIVER_SWIFTSCAN_LIB" : "/this/is/a/bad/path"])
@@ -453,7 +455,7 @@ final class PluginTests: XCTestCase {
             let package = try XCTUnwrap(packageGraph.rootPackages.first)
             
             // Find the regular target in our test package.
-            let libraryTarget = try XCTUnwrap(package.targets.map(\.underlying).first{ $0.name == "MyLibrary" } as? SwiftTarget)
+            let libraryTarget = try XCTUnwrap(package.modules.map(\.underlying).first{ $0.name == "MyLibrary" } as? SwiftModule)
             XCTAssertEqual(libraryTarget.type, .library)
             
             // Set up a delegate to handle callbacks from the command plugin.
@@ -466,7 +468,7 @@ final class PluginTests: XCTestCase {
                     self.delegateQueue = delegateQueue
                 }
                 
-                func pluginCompilationStarted(commandLine: [String], environment: EnvironmentVariables) {
+                func pluginCompilationStarted(commandLine: [String], environment: [String: String]) {
                 }
                 
                 func pluginCompilationEnded(result: PluginCompilationResult) {
@@ -508,16 +510,16 @@ final class PluginTests: XCTestCase {
                 diagnosticsChecker: (DiagnosticsTestResult) throws -> Void
             ) async {
                 // Find the named plugin.
-                let plugins = package.targets.compactMap{ $0.underlying as? PluginTarget }
+                let plugins = package.modules.compactMap{ $0.underlying as? PluginModule }
                 guard let plugin = plugins.first(where: { $0.name == pluginName }) else {
                     return XCTFail("There is no plugin target named ‘\(pluginName)’")
                 }
                 XCTAssertTrue(plugin.type == .plugin, "Target \(plugin) isn’t a plugin")
 
                 // Find the named input targets to the plugin.
-                var targets: [ResolvedTarget] = []
+                var targets: [ResolvedModule] = []
                 for targetName in targetNames {
-                    guard let target = package.targets.first(where: { $0.underlying.name == targetName }) else {
+                    guard let target = package.modules.first(where: { $0.underlying.name == targetName }) else {
                         return XCTFail("There is no target named ‘\(targetName)’")
                     }
                     XCTAssertTrue(target.type != .plugin, "Target \(target) is a plugin")
@@ -548,6 +550,7 @@ final class PluginTests: XCTestCase {
                         pkgConfigDirectories: [],
                         sdkRootPath: nil,
                         fileSystem: localFileSystem,
+                        modulesGraph: packageGraph,
                         observabilityScope: observability.topScope,
                         callbackQueue: delegateQueue,
                         delegate: delegate,
@@ -636,7 +639,7 @@ final class PluginTests: XCTestCase {
             XCTAssertNoDiagnostics(observability.diagnostics)
 
             // Make sure that the use of plugins doesn't bleed into the use of plugins by tools.
-            let testTargetMappings = try packageGraph.computeTestTargetsForExecutableTargets()
+            let testTargetMappings = try packageGraph.computeTestModulesForExecutableModules()
             for (target, testTargets) in testTargetMappings {
                 XCTAssertFalse(testTargets.contains{ $0.name == "MySourceGenPluginTests" }, "target: \(target), testTargets: \(testTargets)")
             }
@@ -737,9 +740,9 @@ final class PluginTests: XCTestCase {
             
             // Find the regular target in our test package.
             let libraryTarget = try XCTUnwrap(
-                package.targets
+                package.modules
                     .map(\.underlying)
-                    .first{ $0.name == "MyLibrary" } as? SwiftTarget
+                    .first{ $0.name == "MyLibrary" } as? SwiftModule
             )
             XCTAssertEqual(libraryTarget.type, .library)
             
@@ -754,7 +757,7 @@ final class PluginTests: XCTestCase {
                     self.delegateQueue = delegateQueue
                 }
                 
-                func pluginCompilationStarted(commandLine: [String], environment: EnvironmentVariables) {
+                func pluginCompilationStarted(commandLine: [String], environment: [String: String]) {
                 }
                 
                 func pluginCompilationEnded(result: PluginCompilationResult) {
@@ -793,7 +796,7 @@ final class PluginTests: XCTestCase {
             }
 
             // Find the relevant plugin.
-            let plugins = package.targets.compactMap { $0.underlying as? PluginTarget }
+            let plugins = package.modules.compactMap { $0.underlying as? PluginModule }
             guard let plugin = plugins.first(where: { $0.name == "NeverendingPlugin" }) else {
                 return XCTFail("There is no plugin target named ‘NeverendingPlugin’")
             }
@@ -825,6 +828,7 @@ final class PluginTests: XCTestCase {
                             pkgConfigDirectories: [],
                             sdkRootPath: try UserToolchain.default.sdkRootPath,
                             fileSystem: localFileSystem,
+                            modulesGraph: packageGraph,
                             observabilityScope: observability.topScope,
                             callbackQueue: delegateQueue,
                             delegate: delegate
@@ -1155,7 +1159,9 @@ final class PluginTests: XCTestCase {
         }
     }
 
-    func testURLBasedPluginAPI() throws {
+    func testURLBasedPluginAPI() async throws {
+        try await UserToolchain.default.skipUnlessAtLeastSwift6()
+
         // Only run the test if the environment in which we're running actually supports Swift concurrency (which the plugin APIs require).
         try XCTSkipIf(!UserToolchain.default.supportsSwiftConcurrency(), "skipping because test environment doesn't support concurrency")
 
@@ -1165,7 +1171,9 @@ final class PluginTests: XCTestCase {
         }
     }
 
-    func testDependentPlugins() throws {
+    func testDependentPlugins() async throws {
+        try await UserToolchain.default.skipUnlessAtLeastSwift6()
+
         try XCTSkipIf(!UserToolchain.default.supportsSwiftConcurrency(), "skipping because test environment doesn't support concurrency")
 
         try fixture(name: "Miscellaneous/Plugins/DependentPlugins") { fixturePath in

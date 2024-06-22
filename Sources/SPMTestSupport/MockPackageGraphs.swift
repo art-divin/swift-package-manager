@@ -26,13 +26,15 @@ import struct PackageModel.TargetDescription
 import protocol TSCBasic.FileSystem
 import class TSCBasic.InMemoryFileSystem
 
-package typealias MockPackageGraph = (
+@_spi(SwiftPMInternal)
+public typealias MockPackageGraph = (
     graph: ModulesGraph,
     fileSystem: any FileSystem,
     observabilityScope: ObservabilityScope
 )
 
-package func macrosPackageGraph() throws -> MockPackageGraph {
+@_spi(SwiftPMInternal)
+public func macrosPackageGraph() throws -> MockPackageGraph {
     let fs = InMemoryFileSystem(emptyFiles:
         "/swift-firmware/Sources/Core/source.swift",
         "/swift-firmware/Sources/HAL/source.swift",
@@ -130,11 +132,14 @@ package func macrosPackageGraph() throws -> MockPackageGraph {
     return (graph, fs, observability.topScope)
 }
 
-package func macrosTestsPackageGraph() throws -> MockPackageGraph {
+@_spi(SwiftPMInternal)
+public func macrosTestsPackageGraph() throws -> MockPackageGraph {
     let fs = InMemoryFileSystem(emptyFiles:
+        "/swift-mmio/Plugins/MMIOPlugin/source.swift",
         "/swift-mmio/Sources/MMIO/source.swift",
         "/swift-mmio/Sources/MMIOMacros/source.swift",
         "/swift-mmio/Sources/MMIOMacrosTests/source.swift",
+        "/swift-mmio/Sources/MMIOMacro+PluginTests/source.swift",
         "/swift-syntax/Sources/SwiftSyntax/source.swift",
         "/swift-syntax/Sources/SwiftSyntaxMacrosTestSupport/source.swift",
         "/swift-syntax/Sources/SwiftSyntaxMacros/source.swift",
@@ -161,6 +166,11 @@ package func macrosTestsPackageGraph() throws -> MockPackageGraph {
                         name: "MMIO",
                         type: .library(.automatic),
                         targets: ["MMIO"]
+                    ),
+                    ProductDescription(
+                        name: "MMIOPlugin",
+                        type: .plugin,
+                        targets: ["MMIOPlugin"]
                     )
                 ],
                 targets: [
@@ -177,10 +187,23 @@ package func macrosTestsPackageGraph() throws -> MockPackageGraph {
                         type: .macro
                     ),
                     TargetDescription(
+                        name: "MMIOPlugin",
+                        type: .plugin,
+                        pluginCapability: .buildTool
+                    ),
+                    TargetDescription(
                         name: "MMIOMacrosTests",
                         dependencies: [
                             .target(name: "MMIOMacros"),
                             .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax")
+                        ],
+                        type: .test
+                    ),
+                    TargetDescription(
+                        name: "MMIOMacro+PluginTests",
+                        dependencies: [
+                            .target(name: "MMIOPlugin"),
+                            .target(name: "MMIOMacros")
                         ],
                         type: .test
                     )
@@ -259,7 +282,8 @@ package func macrosTestsPackageGraph() throws -> MockPackageGraph {
     return (graph, fs, observability.topScope)
 }
 
-package func trivialPackageGraph() throws -> MockPackageGraph {
+@_spi(SwiftPMInternal)
+public func trivialPackageGraph() throws -> MockPackageGraph {
     let fs = InMemoryFileSystem(
         emptyFiles:
         "/Pkg/Sources/app/main.swift",
@@ -289,7 +313,8 @@ package func trivialPackageGraph() throws -> MockPackageGraph {
     return (graph, fs, observability.topScope)
 }
 
-package func embeddedCxxInteropPackageGraph() throws -> MockPackageGraph {
+@_spi(SwiftPMInternal)
+public func embeddedCxxInteropPackageGraph() throws -> MockPackageGraph {
     let fs = InMemoryFileSystem(
         emptyFiles:
         "/Pkg/Sources/app/main.swift",
@@ -331,7 +356,8 @@ package func embeddedCxxInteropPackageGraph() throws -> MockPackageGraph {
     return (graph, fs, observability.topScope)
 }
 
-package func toolsExplicitLibrariesGraph(linkage: ProductType.LibraryType) throws -> MockPackageGraph {
+@_spi(SwiftPMInternal)
+public func toolsExplicitLibrariesGraph(linkage: ProductType.LibraryType) throws -> MockPackageGraph {
     let fs = InMemoryFileSystem(emptyFiles:
         "/swift-mmio/Sources/MMIOMacros/source.swift",
         "/swift-mmio/Sources/MMIOMacrosTests/source.swift",

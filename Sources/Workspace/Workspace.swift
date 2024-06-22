@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2014-2023 Apple Inc. and the Swift project authors
+// Copyright (c) 2014-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -173,6 +173,7 @@ public class Workspace {
     ///   - delegate: Delegate for workspace events
     public convenience init(
         fileSystem: any FileSystem,
+        environment: Environment = .current,
         location: Location,
         authorizationProvider: (any AuthorizationProvider)? = .none,
         registryAuthorizationProvider: (any AuthorizationProvider)? = .none,
@@ -189,6 +190,7 @@ public class Workspace {
     ) throws {
         try self.init(
             fileSystem: fileSystem,
+            environment: environment,
             location: location,
             authorizationProvider: authorizationProvider,
             registryAuthorizationProvider: registryAuthorizationProvider,
@@ -236,6 +238,7 @@ public class Workspace {
     ///   - delegate: Delegate for workspace events
     public convenience init(
         fileSystem: FileSystem? = .none,
+        environment: Environment = .current,
         forRootPackage packagePath: AbsolutePath,
         authorizationProvider: AuthorizationProvider? = .none,
         registryAuthorizationProvider: AuthorizationProvider? = .none,
@@ -243,6 +246,7 @@ public class Workspace {
         cancellator: Cancellator? = .none,
         initializationWarningHandler: ((String) -> Void)? = .none,
         // optional customization used for advanced integration situations
+        customHostToolchain: UserToolchain? = .none,
         customManifestLoader: ManifestLoaderProtocol? = .none,
         customPackageContainerProvider: PackageContainerProvider? = .none,
         customRepositoryProvider: RepositoryProvider? = .none,
@@ -253,12 +257,14 @@ public class Workspace {
         let location = try Location(forRootPackage: packagePath, fileSystem: fileSystem)
         try self.init(
             fileSystem: fileSystem,
+            environment: environment,
             location: location,
             authorizationProvider: authorizationProvider,
             registryAuthorizationProvider: registryAuthorizationProvider,
             configuration: configuration,
             cancellator: cancellator,
             initializationWarningHandler: initializationWarningHandler,
+            customHostToolchain: customHostToolchain,
             customManifestLoader: customManifestLoader,
             customPackageContainerProvider: customPackageContainerProvider,
             customRepositoryProvider: customRepositoryProvider,
@@ -331,6 +337,7 @@ public class Workspace {
     public static func _init(
         // core
         fileSystem: FileSystem,
+        environment: Environment,
         location: Location,
         authorizationProvider: AuthorizationProvider? = .none,
         registryAuthorizationProvider: AuthorizationProvider? = .none,
@@ -359,6 +366,7 @@ public class Workspace {
     ) throws -> Workspace {
         try .init(
             fileSystem: fileSystem,
+            environment: environment,
             location: location,
             authorizationProvider: authorizationProvider,
             registryAuthorizationProvider: registryAuthorizationProvider,
@@ -388,6 +396,7 @@ public class Workspace {
     private init(
         // core
         fileSystem: FileSystem,
+        environment: Environment,
         location: Location,
         authorizationProvider: AuthorizationProvider?,
         registryAuthorizationProvider: AuthorizationProvider?,
@@ -426,7 +435,13 @@ public class Workspace {
         )
 
         let currentToolsVersion = customToolsVersion ?? ToolsVersion.current
-        let hostToolchain = try customHostToolchain ?? UserToolchain(swiftSDK: .hostSwiftSDK())
+        let hostToolchain = try customHostToolchain ?? UserToolchain(
+            swiftSDK: .hostSwiftSDK(
+                environment: environment
+            ),
+            environment: environment,
+            fileSystem: fileSystem
+        )
         var manifestLoader = customManifestLoader ?? ManifestLoader(
             toolchain: hostToolchain,
             cacheDir: location.sharedManifestsCacheDirectory,
@@ -876,6 +891,29 @@ extension Workspace {
         expectedSigningEntities: [PackageIdentity: RegistryReleaseMetadata.SigningEntity] = [:],
         observabilityScope: ObservabilityScope
     ) throws -> ModulesGraph {
+        try self.loadPackageGraph(
+            rootInput: root,
+            explicitProduct: explicitProduct,
+            traitConfiguration: nil,
+            forceResolvedVersions: forceResolvedVersions,
+            customXCTestMinimumDeploymentTargets: customXCTestMinimumDeploymentTargets,
+            testEntryPointPath: testEntryPointPath,
+            expectedSigningEntities: expectedSigningEntities,
+            observabilityScope: observabilityScope
+        )
+    }
+
+    @discardableResult
+    package func loadPackageGraph(
+        rootInput root: PackageGraphRootInput,
+        explicitProduct: String? = nil,
+        traitConfiguration: TraitConfiguration? = nil,
+        forceResolvedVersions: Bool = false,
+        customXCTestMinimumDeploymentTargets: [PackageModel.Platform: PlatformVersion]? = .none,
+        testEntryPointPath: AbsolutePath? = nil,
+        expectedSigningEntities: [PackageIdentity: RegistryReleaseMetadata.SigningEntity] = [:],
+        observabilityScope: ObservabilityScope
+    ) throws -> ModulesGraph {
         let start = DispatchTime.now()
         self.delegate?.willLoadGraph()
         defer {
@@ -916,6 +954,7 @@ extension Workspace {
             binaryArtifacts: binaryArtifacts,
             shouldCreateMultipleTestProducts: self.configuration.shouldCreateMultipleTestProducts,
             createREPLProduct: self.configuration.createREPLProduct,
+            traitConfiguration: traitConfiguration,
             customXCTestMinimumDeploymentTargets: customXCTestMinimumDeploymentTargets,
             testEntryPointPath: testEntryPointPath,
             fileSystem: self.fileSystem,
@@ -937,8 +976,24 @@ extension Workspace {
         observabilityScope: ObservabilityScope
     ) throws -> ModulesGraph {
         try self.loadPackageGraph(
+            rootPath: rootPath,
+            explicitProduct: explicitProduct,
+            traitConfiguration: nil,
+            observabilityScope: observabilityScope
+        )
+    }
+
+    @discardableResult
+    package func loadPackageGraph(
+        rootPath: AbsolutePath,
+        explicitProduct: String? = nil,
+        traitConfiguration: TraitConfiguration? = nil,
+        observabilityScope: ObservabilityScope
+    ) throws -> ModulesGraph {
+        try self.loadPackageGraph(
             rootInput: PackageGraphRootInput(packages: [rootPath]),
             explicitProduct: explicitProduct,
+            traitConfiguration: traitConfiguration,
             observabilityScope: observabilityScope
         )
     }
@@ -1093,7 +1148,9 @@ extension Workspace {
                     additionalFileRules: [],
                     binaryArtifacts: binaryArtifacts,
                     fileSystem: self.fileSystem,
-                    observabilityScope: observabilityScope
+                    observabilityScope: observabilityScope,
+                    // For now we enable all traits
+                    enabledTraits: Set(manifest.traits.map { $0.name })
                 )
                 return try builder.construct()
             }
@@ -1104,7 +1161,7 @@ extension Workspace {
     public func loadPluginImports(
         packageGraph: ModulesGraph
     ) async throws -> [PackageIdentity: [String: [String]]] {
-        let pluginTargets = packageGraph.allTargets.filter { $0.type == .plugin }
+        let pluginTargets = packageGraph.allModules.filter { $0.type == .plugin }
         let scanner = SwiftcImportScanner(
             swiftCompilerEnvironment: hostToolchain.swiftCompilerEnvironment,
             swiftCompilerFlags: self.hostToolchain
@@ -1150,7 +1207,7 @@ extension Workspace {
         observabilityScope: ObservabilityScope,
         completion: @escaping (Result<Package, Error>) -> Void
     ) {
-        guard let previousPackage = packageGraph.packages.first(where: { $0.identity == identity }) else {
+        guard let previousPackage = packageGraph.package(for: identity) else {
             return completion(.failure(StringError("could not find package with identity \(identity)")))
         }
 
@@ -1173,7 +1230,9 @@ extension Workspace {
                     shouldCreateMultipleTestProducts: self.configuration.shouldCreateMultipleTestProducts,
                     createREPLProduct: self.configuration.createREPLProduct,
                     fileSystem: self.fileSystem,
-                    observabilityScope: observabilityScope
+                    observabilityScope: observabilityScope,
+                    // For now we enable all traits
+                    enabledTraits: Set(manifest.traits.map { $0.name })
                 )
                 return try builder.construct()
             }
@@ -1465,7 +1524,7 @@ private func warnToStderr(_ message: String) {
 }
 
 // used for manifest validation
-#if swift(<6.0)
+#if compiler(<6.0)
 extension RepositoryManager: ManifestSourceControlValidator {}
 #else
 extension RepositoryManager: @retroactive ManifestSourceControlValidator {}

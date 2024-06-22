@@ -11,8 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
-
 import Commands
+import Foundation
 
 import SwiftSDKCommand
 import PackageCollectionsCommand
@@ -29,7 +29,7 @@ struct SwiftPM {
         // into the same test bundle. We're then linking single `swift-package-manager` binary instead and passing
         // executable name via `SWIFTPM_EXEC_NAME`.
         if baseNameWithoutExtension == "swift-package-manager" {
-            await main(execName: EnvironmentVariables.process()["SWIFTPM_EXEC_NAME"])
+            await main(execName: Environment.current["SWIFTPM_EXEC_NAME"])
         } else {
             await main(execName: baseNameWithoutExtension)
         }
@@ -42,7 +42,7 @@ struct SwiftPM {
         case "swift-build":
             await SwiftBuildCommand.main()
         case "swift-experimental-sdk":
-            print("warning: `swift experimental-sdk` command is deprecated and will be removed in a future version of SwiftPM. Use `swift sdk` instead.")
+            fputs("warning: `swift experimental-sdk` command is deprecated and will be removed in a future version of SwiftPM. Use `swift sdk` instead.\n", stderr)
             fallthrough
         case "swift-sdk":
             await SwiftSDKCommand.main()

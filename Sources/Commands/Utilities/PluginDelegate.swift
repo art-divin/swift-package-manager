@@ -11,12 +11,9 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
-
 import CoreCommands
-
 import Foundation
 import PackageModel
-
 import SPMBuildCore
 
 import protocol TSCBasic.OutputByteStream
@@ -26,16 +23,16 @@ import struct TSCBasic.ProcessResult
 
 final class PluginDelegate: PluginInvocationDelegate {
     let swiftCommandState: SwiftCommandState
-    let plugin: PluginTarget
+    let plugin: PluginModule
     var lineBufferedOutput: Data
 
-    init(swiftCommandState: SwiftCommandState, plugin: PluginTarget) {
+    init(swiftCommandState: SwiftCommandState, plugin: PluginModule) {
         self.swiftCommandState = swiftCommandState
         self.plugin = plugin
         self.lineBufferedOutput = Data()
     }
 
-    func pluginCompilationStarted(commandLine: [String], environment: EnvironmentVariables) {
+    func pluginCompilationStarted(commandLine: [String], environment: [String: String]) {
     }
 
     func pluginCompilationEnded(result: PluginCompilationResult) {
@@ -78,7 +75,7 @@ final class PluginDelegate: PluginInvocationDelegate {
     class TeeOutputByteStream: OutputByteStream {
         var downstreams: [OutputByteStream]
 
-        package init(_ downstreams: [OutputByteStream]) {
+        public init(_ downstreams: [OutputByteStream]) {
             self.downstreams = downstreams
         }
 
@@ -86,7 +83,7 @@ final class PluginDelegate: PluginInvocationDelegate {
             return 0 // should be related to the downstreams somehow
         }
 
-        package func write(_ byte: UInt8) {
+        public func write(_ byte: UInt8) {
             for downstream in downstreams {
                 downstream.write(byte)
             }
@@ -98,13 +95,13 @@ final class PluginDelegate: PluginInvocationDelegate {
             }
 		}
 
-        package func flush() {
+        public func flush() {
             for downstream in downstreams {
                 downstream.flush()
             }
         }
 
-        package func addStream(_ stream: OutputByteStream) {
+        public func addStream(_ stream: OutputByteStream) {
             self.downstreams.append(stream)
         }
     }
@@ -164,6 +161,7 @@ final class PluginDelegate: PluginInvocationDelegate {
         let buildSystem = try swiftCommandState.createBuildSystem(
             explicitBuildSystem: .native,
             explicitProduct: explicitProduct,
+            traitConfiguration: .init(),
             cacheBuildManifest: false,
             productsBuildParameters: buildParameters,
             outputStream: outputStream,
@@ -226,7 +224,10 @@ final class PluginDelegate: PluginInvocationDelegate {
         var toolsBuildParameters = try swiftCommandState.toolsBuildParameters
         toolsBuildParameters.testingParameters.enableTestability = true
         toolsBuildParameters.testingParameters.enableCodeCoverage = parameters.enableCodeCoverage
-        let buildSystem = try swiftCommandState.createBuildSystem(toolsBuildParameters: toolsBuildParameters)
+        let buildSystem = try swiftCommandState.createBuildSystem(
+            traitConfiguration: .init(),
+            toolsBuildParameters: toolsBuildParameters
+        )
         try buildSystem.build(subset: .allIncludingTests)
 
         // Clean out the code coverage directory that may contain stale `profraw` files from a previous run of
@@ -239,7 +240,8 @@ final class PluginDelegate: PluginInvocationDelegate {
         let testEnvironment = try TestingSupport.constructTestEnvironment(
             toolchain: toolchain,
             destinationBuildParameters: toolsBuildParameters,
-            sanitizers: swiftCommandState.options.build.sanitizers
+            sanitizers: swiftCommandState.options.build.sanitizers,
+            library: .xctest // FIXME: support both libraries
         )
 
         // Iterate over the tests and run those that match the filter.
@@ -383,16 +385,31 @@ final class PluginDelegate: PluginInvocationDelegate {
         // while building.
 
         // Create a build system for building the target., skipping the the cache because we need the build plan.
-        let buildSystem = try swiftCommandState.createBuildSystem(explicitBuildSystem: .native, cacheBuildManifest: false)
+        let buildSystem = try swiftCommandState.createBuildSystem(
+            explicitBuildSystem: .native,
+            traitConfiguration: .init(),
+            cacheBuildManifest: false
+        )
 
         // Find the target in the build operation's package graph; it's an error if we don't find it.
         let packageGraph = try buildSystem.getPackageGraph()
-        guard let target = packageGraph.allTargets.first(where: { $0.name == targetName }) else {
+        guard let target = packageGraph.module(for: targetName) else {
             throw StringError("could not find a target named “\(targetName)”")
         }
 
+        // FIXME: This is currently necessary because `target(for:destination:)` can
+        // produce a module that is targeting host when `targetName`` corresponds to
+        // a macro, plugin, or a test. Ideally we'd ask a build system for a`BuildSubset`
+        // and get the destination from there but there are other places that need
+        // refactoring in that way as well.
+        let buildParameters = if target.buildTriple == .tools {
+                try swiftCommandState.toolsBuildParameters
+            } else {
+                try swiftCommandState.productsBuildParameters
+            }
+
         // Build the target, if needed.
-        try buildSystem.build(subset: .target(target.name))
+        try buildSystem.build(subset: .target(target.name, for: buildParameters.destination))
 
         // Configure the symbol graph extractor.
         var symbolGraphExtractor = try SymbolGraphExtract(
@@ -421,7 +438,7 @@ final class PluginDelegate: PluginInvocationDelegate {
         guard let package = packageGraph.package(for: target) else {
             throw StringError("could not determine the package for target “\(target.name)”")
         }
-        let outputDir = try buildSystem.buildPlan.toolsBuildParameters.dataPath.appending(
+        let outputDir = buildParameters.dataPath.appending(
             components: "extracted-symbols",
             package.identity.description,
             target.name
@@ -432,6 +449,7 @@ final class PluginDelegate: PluginInvocationDelegate {
         let result = try symbolGraphExtractor.extractSymbolGraph(
             module: target,
             buildPlan: try buildSystem.buildPlan,
+            buildParameters: buildParameters,
             outputRedirection: .collect,
             outputDirectory: outputDir,
             verboseOutput: self.swiftCommandState.logLevel <= .info
