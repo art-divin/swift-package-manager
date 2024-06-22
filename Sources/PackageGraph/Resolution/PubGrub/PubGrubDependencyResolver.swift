@@ -612,7 +612,7 @@ public struct PubGrubDependencyResolver {
             let priorCause = _mostRecentSatisfier.cause!
 
             var newTerms = incompatibility.terms.filter { $0 != mostRecentTerm }
-            newTerms += priorCause.terms.filter { $0.node != _mostRecentSatisfier.term.node }
+            newTerms.append(contentsOf: priorCause.terms.filter { $0.node != _mostRecentSatisfier.term.node })
 
             if let _difference = difference {
                 // rdar://93335995
